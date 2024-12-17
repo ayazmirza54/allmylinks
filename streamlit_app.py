@@ -4,7 +4,9 @@ import requests
 from bs4 import BeautifulSoup
 import re
 from tinydb import TinyDB, Query
+from opengraph import OpenGraph
 import os
+from urllib.parse import urljoin
 
 st.set_page_config(page_title="Link Manager", page_icon="🔗", layout="wide")
 
@@ -14,29 +16,25 @@ db = TinyDB(DB_FILE)
 links_table = db.table("links")
 Link = Query()
 
+DEFAULT_IMAGE = "https://via.placeholder.com/150"
 
 def get_opengraph_data(url):
-    """Fetches OpenGraph data (title, description, image) from a URL."""
+    """Fetches OpenGraph data (title, description, image) from a URL using opengraph library."""
     try:
-        response = requests.get(url, timeout=5)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
-
+        og = OpenGraph(url,timeout=5)
         og_data = {}
-        og_data['title'] = soup.find('meta', property='og:title')
-        og_data['title'] = og_data['title']['content'] if og_data['title'] else soup.title.string if soup.title else 'No Title'
+        og_data['title'] = og.get('title', 'No Title')
+        og_data['description'] = og.get('description', '')
+        og_data['image'] = og.get('image', '')
 
-        og_data['description'] = soup.find('meta', property='og:description')
-        og_data['description'] = og_data['description']['content'] if og_data['description'] else ''
-       
-        og_data['image'] = soup.find('meta', property='og:image')
-        og_data['image'] = og_data['image']['content'] if og_data['image'] else ''
+        if og_data['image'] and not og_data['image'].startswith(("http://", "https://")):
+          og_data['image'] = urljoin(url,og_data['image'])
 
         return og_data
-
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         st.error(f"Error fetching URL: {e}")
         return {'title': 'Error fetching title', 'description': 'Error fetching description', 'image':''}
+
 
 def is_valid_url(url):
     """Checks if the URL is valid using a regular expression."""
@@ -78,6 +76,8 @@ def main():
               image_url = link["og_data"].get("image","")
               if image_url:
                  st.image(image_url, use_column_width=True, width=100)
+              else:
+                st.image(DEFAULT_IMAGE, use_column_width=True, width=100)
           with col2:
             with st.expander(link["og_data"].get("title","No Title"), expanded=True):
                 st.markdown(f"**URL:** [{link['url']}]({link['url']})")
