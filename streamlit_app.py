@@ -5,6 +5,7 @@ import urllib.parse
 import sqlite3
 from datetime import datetime
 import validators
+import logging
 
 class LinkManager:
     def __init__(self):
@@ -28,44 +29,76 @@ class LinkManager:
         self.conn.commit()
 
     def extract_metadata(self, url):
-        """Extract Open Graph and basic metadata from URL"""
+        """Enhanced metadata extraction with multiple fallback methods"""
         try:
             # Validate URL first
             if not validators.url(url):
+                st.error("Invalid URL")
                 return None
 
             # Fetch webpage
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8'
             }
+            
             response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()  # Raise an error for bad status codes
             
             # Parse HTML
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Extract Open Graph metadata
+            # Priority 1: Open Graph metadata
             og_title = soup.find('meta', property='og:title')
             og_description = soup.find('meta', property='og:description')
             og_image = soup.find('meta', property='og:image')
             
-            # Fallback to HTML meta tags
-            title = (og_title and og_title.get('content')) or soup.title.string if soup.title else url
-            description = (og_description and og_description.get('content')) or ''
-            image_url = (og_image and og_image.get('content')) or ''
+            # Priority 2: Twitter Card metadata
+            twitter_title = soup.find('meta', property='twitter:title')
+            twitter_description = soup.find('meta', property='twitter:description')
+            twitter_image = soup.find('meta', property='twitter:image')
+            
+            # Fallback methods
+            title = (
+                (og_title and og_title.get('content')) or 
+                (twitter_title and twitter_title.get('content')) or 
+                (soup.title and soup.title.string) or 
+                url
+            )
+            
+            description = (
+                (og_description and og_description.get('content')) or 
+                (twitter_description and twitter_description.get('content')) or 
+                ''
+            )
+            
+            image_url = (
+                (og_image and og_image.get('content')) or 
+                (twitter_image and twitter_image.get('content')) or 
+                ''
+            )
             
             # Ensure absolute image URL
             if image_url and not image_url.startswith(('http://', 'https://')):
                 image_url = urllib.parse.urljoin(url, image_url)
             
+            # Truncate description
+            description = description[:250] + '...' if len(description) > 250 else description
+            
             return {
-                'title': title,
-                'description': description,
-                'image_url': image_url
+                'title': title or 'Untitled',
+                'description': description or 'No description',
+                'image_url': image_url or 'https://via.placeholder.com/300x200?text=No+Preview'
             }
         
         except Exception as e:
-            st.error(f"Error extracting metadata: {e}")
-            return None
+            logging.error(f"Metadata extraction error for {url}: {e}")
+            return {
+                'title': url,
+                'description': 'Unable to fetch metadata',
+                'image_url': 'https://via.placeholder.com/300x200?text=Preview+Unavailable'
+            }
 
     def save_link(self, url):
         """Save link to database"""
@@ -108,69 +141,20 @@ def main():
     # Dark Mode Material Design CSS
     st.markdown("""
     <style>
-    /* Dark Mode Base Styles */
-    .stApp {
-        background-color: #121212;
-        color: #E0E0E0;
-        font-family: 'Roboto', sans-serif;
-    }
-
-    /* Dark Mode Input Styles */
-    .stTextInput > div > div > input {
-        background-color: #1E1E1E;
-        color: #E0E0E0;
-        border-radius: 8px;
-        border: 1px solid #333;
-        padding: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-    }
-
-    /* Dark Mode Button Styles */
-    .stButton > button {
-        background-color: #BB86FC;
-        color: #000;
-        border-radius: 8px;
-        border: none;
-        padding: 10px 20px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.4);
-        transition: all 0.3s ease;
-    }
-    .stButton > button:hover {
-        background-color: #9767E6;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.5);
-    }
-
-    /* Link Card Styles */
-    .link-card {
-        background-color: #1E1E1E;
-        border-radius: 12px;
-        padding: 15px;
-        margin-bottom: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-        border: 1px solid #333;
-        transition: transform 0.3s ease;
-    }
-    .link-card:hover {
-        transform: scale(1.02);
-        border-color: #BB86FC;
-    }
-
-    /* Typography */
-    h1, h2, h3 {
-        color: #BB86FC;
-    }
-    p {
-        color: #E0E0E0;
-    }
-
-    /* Custom Link Button */
-    .custom-link-button {
+    /* Existing dark mode styles remain the same */
+    .link-card img {
         width: 100%;
-        background-color: #BB86FC !important;
-        color: #000 !important;
-        border: none;
+        height: 200px;
+        object-fit: cover;
         border-radius: 8px;
-        padding: 8px;
+        margin-bottom: 10px;
+    }
+    .link-preview-text {
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -201,14 +185,14 @@ def main():
     for i, link in enumerate(saved_links):
         col = cols[i % 3]
         with col:
-            # Custom card design with dark mode
+            # Custom card design with improved preview
             st.markdown(f"""
             <div class="link-card">
-                {'<img src="' + (link[4] or 'https://via.placeholder.com/300x200?text=No+Preview') + '" style="width:100%;border-radius:8px;margin-bottom:10px;object-fit:cover;max-height:200px;">' if link[4] else ''}
+                <img src="{link[4] or 'https://via.placeholder.com/300x200?text=No+Preview'}" alt="Link Preview" onerror="this.onerror=null; this.src='https://via.placeholder.com/300x200?text=Preview+Failed';">
                 <h3 style="color:#BB86FC;">{link[2] or 'Untitled Link'}</h3>
-                <p>{link[3][:100] + '...' if link[3] else 'No description'}</p>
+                <p class="link-preview-text" style="color:#E0E0E0;">{link[3] or 'No description'}</p>
                 <a href="{link[1]}" target="_blank" style="text-decoration:none;">
-                    <button class="custom-link-button">Open Link</button>
+                    <button class="custom-link-button" style="width:100%; background-color:#BB86FC !important; color:#000 !important; border:none; border-radius:8px; padding:8px;">Open Link</button>
                 </a>
             </div>
             """, unsafe_allow_html=True)
