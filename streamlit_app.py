@@ -105,42 +105,72 @@ def main():
         layout="wide"
     )
 
-    # Custom CSS for Material Design-like theme
+    # Dark Mode Material Design CSS
     st.markdown("""
     <style>
+    /* Dark Mode Base Styles */
     .stApp {
-        background-color: #f5f5f5;
+        background-color: #121212;
+        color: #E0E0E0;
         font-family: 'Roboto', sans-serif;
     }
+
+    /* Dark Mode Input Styles */
     .stTextInput > div > div > input {
+        background-color: #1E1E1E;
+        color: #E0E0E0;
         border-radius: 8px;
-        border: 1px solid #ccc;
+        border: 1px solid #333;
         padding: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
     }
+
+    /* Dark Mode Button Styles */
     .stButton > button {
-        background-color: #6200ee;
-        color: white;
+        background-color: #BB86FC;
+        color: #000;
         border-radius: 8px;
         border: none;
         padding: 10px 20px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.4);
         transition: all 0.3s ease;
     }
     .stButton > button:hover {
-        background-color: #3700b3;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        background-color: #9767E6;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.5);
     }
+
+    /* Link Card Styles */
     .link-card {
-        background-color: white;
+        background-color: #1E1E1E;
         border-radius: 12px;
         padding: 15px;
         margin-bottom: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        border: 1px solid #333;
         transition: transform 0.3s ease;
     }
     .link-card:hover {
         transform: scale(1.02);
+        border-color: #BB86FC;
+    }
+
+    /* Typography */
+    h1, h2, h3 {
+        color: #BB86FC;
+    }
+    p {
+        color: #E0E0E0;
+    }
+
+    /* Custom Link Button */
+    .custom-link-button {
+        width: 100%;
+        background-color: #BB86FC !important;
+        color: #000 !important;
+        border: none;
+        border-radius: 8px;
+        padding: 8px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -171,14 +201,14 @@ def main():
     for i, link in enumerate(saved_links):
         col = cols[i % 3]
         with col:
-            # Custom card design
+            # Custom card design with dark mode
             st.markdown(f"""
             <div class="link-card">
-                {'<img src="' + (link[4] or 'https://via.placeholder.com/300x200?text=No+Preview') + '" style="width:100%;border-radius:8px;margin-bottom:10px;">' if link[4] else ''}
-                <h3>{link[2] or 'Untitled Link'}</h3>
+                {'<img src="' + (link[4] or 'https://via.placeholder.com/300x200?text=No+Preview') + '" style="width:100%;border-radius:8px;margin-bottom:10px;object-fit:cover;max-height:200px;">' if link[4] else ''}
+                <h3 style="color:#BB86FC;">{link[2] or 'Untitled Link'}</h3>
                 <p>{link[3][:100] + '...' if link[3] else 'No description'}</p>
                 <a href="{link[1]}" target="_blank" style="text-decoration:none;">
-                    <button style="width:100%;background-color:#6200ee;color:white;border:none;border-radius:8px;padding:8px;">Open Link</button>
+                    <button class="custom-link-button">Open Link</button>
                 </a>
             </div>
             """, unsafe_allow_html=True)
