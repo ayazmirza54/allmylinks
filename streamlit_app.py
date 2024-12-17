@@ -1,126 +1,91 @@
 import streamlit as st
-import sqlite3
+from streamlit_card import card
 import requests
 from bs4 import BeautifulSoup
 import re
+from tinydb import TinyDB, Query
+import os
 
-# Function to fetch OpenGraph metadata
-def fetch_opengraph_data(url):
+st.set_page_config(page_title="Link Manager", page_icon="🔗", layout="wide")
+
+# Initialize TinyDB
+DB_FILE = "links.json"
+db = TinyDB(DB_FILE)
+links_table = db.table("links")
+Link = Query()
+
+
+def get_opengraph_data(url):
+    """Fetches OpenGraph data (title, description, image) from a URL."""
     try:
         response = requests.get(url, timeout=5)
-        soup = BeautifulSoup(response.text, "html.parser")
+        response.raise_for_status()
+        soup = BeautifulSoup(response.content, 'html.parser')
 
-        def get_og_tag(prop):
-            tag = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
-            return tag["content"] if tag and "content" in tag.attrs else None
+        og_data = {}
+        og_data['title'] = soup.find('meta', property='og:title')
+        og_data['title'] = og_data['title']['content'] if og_data['title'] else soup.title.string if soup.title else 'No Title'
 
-        og_title = get_og_tag("og:title") or soup.title.string
-        og_description = get_og_tag("og:description")
-        og_image = get_og_tag("og:image") or "/default-placeholder.png"
-        
-        return {"title": og_title, "description": og_description, "image": og_image}
-    except Exception as e:
-        return {"title": "Failed to fetch data", "description": str(e), "image": None}
+        og_data['description'] = soup.find('meta', property='og:description')
+        og_data['description'] = og_data['description']['content'] if og_data['description'] else ''
+       
+        og_data['image'] = soup.find('meta', property='og:image')
+        og_data['image'] = og_data['image']['content'] if og_data['image'] else ''
 
-# Database initialization
-def init_db():
-    conn = sqlite3.connect("links.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS links (
-            id INTEGER PRIMARY KEY,
-            url TEXT UNIQUE,
-            title TEXT,
-            description TEXT,
-            image TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
+        return og_data
 
-# Save link to the database
-def save_link(url, title, description, image):
-    conn = sqlite3.connect("links.db")
-    cursor = conn.cursor()
-    try:
-        cursor.execute("INSERT INTO links (url, title, description, image) VALUES (?, ?, ?, ?)",
-                       (url, title, description, image))
-        conn.commit()
-    except sqlite3.IntegrityError:
-        st.warning("This link is already saved!")
-    finally:
-        conn.close()
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error fetching URL: {e}")
+        return {'title': 'Error fetching title', 'description': 'Error fetching description', 'image':''}
 
-# Retrieve all links
-def get_all_links():
-    conn = sqlite3.connect("links.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT url, title, description, image FROM links")
-    links = cursor.fetchall()
-    conn.close()
-    return links
+def is_valid_url(url):
+    """Checks if the URL is valid using a regular expression."""
+    regex = re.compile(
+        r'^(?:http|ftp)s?://'
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'
+        r'localhost|'
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+        r'(?::\d+)?'
+        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+    return re.match(regex, url) is not None
 
-# UI Components
-st.set_page_config(page_title="Link Manager", layout="wide", initial_sidebar_state="expanded")
+def main():
+    st.title("🔗 Link Manager")
 
-# Material Theme-like Styling
-st.markdown("""
-    <style>
-        .card {
-            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-            border-radius: 10px;
-            padding: 15px;
-            margin: 15px 0;
-            background-color: #FFFFFF;
-            transition: 0.3s;
-        }
-        .card:hover {
-            box-shadow: 0 8px 16px rgba(0,0,0,0.3);
-        }
-        img.card-image {
-            width: 100%;
-            border-radius: 10px 10px 0 0;
-        }
-        .link-title {
-            font-size: 1.2em;
-            font-weight: bold;
-        }
-        .link-description {
-            color: #555;
-        }
-    </style>
-""", unsafe_allow_html=True)
+    # Input form
+    with st.form(key="link_form"):
+      url_input = st.text_input("Enter URL:", placeholder="https://example.com")
+      submit_button = st.form_submit_button("Add Link")
+    
+    if submit_button:
+      if not url_input:
+        st.warning("Please enter a link.")
+      elif not is_valid_url(url_input):
+        st.error("Please enter a valid URL.")
+      else:
+          og_data = get_opengraph_data(url_input)
+          links_table.insert({"url": url_input, "og_data": og_data})
+          st.success("Link Added Successfully!")
 
-# Initialize the database
-init_db()
-
-# Sidebar: Add Link
-st.sidebar.header("Add New Link")
-new_link = st.sidebar.text_input("Enter Link URL", placeholder="https://example.com")
-if st.sidebar.button("Save Link"):
-    if new_link:
-        metadata = fetch_opengraph_data(new_link)
-        save_link(new_link, metadata['title'], metadata['description'], metadata['image'])
-        st.sidebar.success("Link saved successfully!")
+    # Fetch links from TinyDB
+    links = links_table.all()
+    # Display links in cards using Material-style UI
+    if links:
+      st.markdown("---")
+      for i, link in enumerate(links):
+          col1, col2 = st.columns([1,3])
+          with col1:
+              image_url = link["og_data"].get("image","")
+              if image_url:
+                 st.image(image_url, use_column_width=True, width=100)
+          with col2:
+            with st.expander(link["og_data"].get("title","No Title"), expanded=True):
+                st.markdown(f"**URL:** [{link['url']}]({link['url']})")
+                description = link["og_data"].get("description","")
+                if description:
+                    st.markdown(f"**Description:** {description}")
     else:
-        st.sidebar.error("Please enter a valid URL.")
+      st.info("No links saved yet")
 
-# Main Section: Display Links
-st.title("🔗 Link Manager")
-st.write("Save, view, and manage your links with previews.")
-
-links = get_all_links()
-
-# Display each link as a card
-if links:
-    for url, title, description, image in links:
-        st.markdown(f"""
-        <div class="card">
-            <img src="{image}" class="card-image" onerror="this.src='/default-placeholder.png'">
-            <h4 class="link-title">{title}</h4>
-            <p class="link-description">{description}</p>
-            <a href="{url}" target="_blank">Visit Link</a>
-        </div>
-        """, unsafe_allow_html=True)
-else:
-    st.info("No links saved yet. Use the sidebar to add a new link.")
+if __name__ == "__main__":
+    main()
