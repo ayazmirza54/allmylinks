@@ -1,91 +1,187 @@
 import streamlit as st
-from streamlit_card import card
 import requests
 from bs4 import BeautifulSoup
-import re
-from tinydb import TinyDB, Query
-from opengraph import OpenGraph
-import os
-from urllib.parse import urljoin
+import urllib.parse
+import sqlite3
+from datetime import datetime
+import validators
 
-st.set_page_config(page_title="Link Manager", page_icon="🔗", layout="wide")
+class LinkManager:
+    def __init__(self):
+        # Initialize SQLite database
+        self.conn = sqlite3.connect('links.db', check_same_thread=False)
+        self.create_table()
 
-# Initialize TinyDB
-DB_FILE = "links.json"
-db = TinyDB(DB_FILE)
-links_table = db.table("links")
-Link = Query()
+    def create_table(self):
+        """Create links table if not exists"""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url TEXT UNIQUE,
+                title TEXT,
+                description TEXT,
+                image_url TEXT,
+                added_at DATETIME
+            )
+        ''')
+        self.conn.commit()
 
-DEFAULT_IMAGE = "https://via.placeholder.com/150"
+    def extract_metadata(self, url):
+        """Extract Open Graph and basic metadata from URL"""
+        try:
+            # Validate URL first
+            if not validators.url(url):
+                return None
 
-def get_opengraph_data(url):
-    """Fetches OpenGraph data (title, description, image) from a URL using opengraph library."""
-    try:
-        og = OpenGraph(url,timeout=5)
-        og_data = {}
-        og_data['title'] = og.get('title', 'No Title')
-        og_data['description'] = og.get('description', '')
-        og_data['image'] = og.get('image', '')
+            # Fetch webpage
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            response = requests.get(url, headers=headers, timeout=10)
+            
+            # Parse HTML
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Extract Open Graph metadata
+            og_title = soup.find('meta', property='og:title')
+            og_description = soup.find('meta', property='og:description')
+            og_image = soup.find('meta', property='og:image')
+            
+            # Fallback to HTML meta tags
+            title = (og_title and og_title.get('content')) or soup.title.string if soup.title else url
+            description = (og_description and og_description.get('content')) or ''
+            image_url = (og_image and og_image.get('content')) or ''
+            
+            # Ensure absolute image URL
+            if image_url and not image_url.startswith(('http://', 'https://')):
+                image_url = urllib.parse.urljoin(url, image_url)
+            
+            return {
+                'title': title,
+                'description': description,
+                'image_url': image_url
+            }
+        
+        except Exception as e:
+            st.error(f"Error extracting metadata: {e}")
+            return None
 
-        if og_data['image'] and not og_data['image'].startswith(("http://", "https://")):
-          og_data['image'] = urljoin(url,og_data['image'])
+    def save_link(self, url):
+        """Save link to database"""
+        metadata = self.extract_metadata(url)
+        if metadata:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute('''
+                    INSERT OR REPLACE INTO links 
+                    (url, title, description, image_url, added_at) 
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (
+                    url, 
+                    metadata['title'], 
+                    metadata['description'], 
+                    metadata['image_url'], 
+                    datetime.now()
+                ))
+                self.conn.commit()
+                st.success("Link saved successfully!")
+                return True
+            except sqlite3.IntegrityError:
+                st.warning("This link already exists.")
+                return False
+        return False
 
-        return og_data
-    except Exception as e:
-        st.error(f"Error fetching URL: {e}")
-        return {'title': 'Error fetching title', 'description': 'Error fetching description', 'image':''}
-
-
-def is_valid_url(url):
-    """Checks if the URL is valid using a regular expression."""
-    regex = re.compile(
-        r'^(?:http|ftp)s?://'
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'
-        r'localhost|'
-        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
-        r'(?::\d+)?'
-        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
-    return re.match(regex, url) is not None
+    def get_all_links(self):
+        """Retrieve all saved links"""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT * FROM links ORDER BY added_at DESC')
+        return cursor.fetchall()
 
 def main():
+    st.set_page_config(
+        page_title="Link Manager", 
+        page_icon="🔗", 
+        layout="wide"
+    )
+
+    # Custom CSS for Material Design-like theme
+    st.markdown("""
+    <style>
+    .stApp {
+        background-color: #f5f5f5;
+        font-family: 'Roboto', sans-serif;
+    }
+    .stTextInput > div > div > input {
+        border-radius: 8px;
+        border: 1px solid #ccc;
+        padding: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .stButton > button {
+        background-color: #6200ee;
+        color: white;
+        border-radius: 8px;
+        border: none;
+        padding: 10px 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        transition: all 0.3s ease;
+    }
+    .stButton > button:hover {
+        background-color: #3700b3;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+    .link-card {
+        background-color: white;
+        border-radius: 12px;
+        padding: 15px;
+        margin-bottom: 15px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        transition: transform 0.3s ease;
+    }
+    .link-card:hover {
+        transform: scale(1.02);
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Initialize Link Manager
+    link_manager = LinkManager()
+
+    # App Title
     st.title("🔗 Link Manager")
 
-    # Input form
-    with st.form(key="link_form"):
-      url_input = st.text_input("Enter URL:", placeholder="https://example.com")
-      submit_button = st.form_submit_button("Add Link")
-    
-    if submit_button:
-      if not url_input:
-        st.warning("Please enter a link.")
-      elif not is_valid_url(url_input):
-        st.error("Please enter a valid URL.")
-      else:
-          og_data = get_opengraph_data(url_input)
-          links_table.insert({"url": url_input, "og_data": og_data})
-          st.success("Link Added Successfully!")
+    # Link Input Section
+    with st.form("link_form", clear_on_submit=True):
+        url = st.text_input("Enter URL to Save")
+        submit_button = st.form_submit_button("Save Link")
+        
+        if submit_button and url:
+            link_manager.save_link(url)
 
-    # Fetch links from TinyDB
-    links = links_table.all()
-    # Display links in cards using Material-style UI
-    if links:
-      st.markdown("---")
-      for i, link in enumerate(links):
-          col1, col2 = st.columns([1,3])
-          with col1:
-              image_url = link["og_data"].get("image","")
-              if image_url:
-                 st.image(image_url, use_column_width=True, width=100)
-              else:
-                st.image(DEFAULT_IMAGE, use_column_width=True, width=100)
-          with col2:
-            with st.expander(link["og_data"].get("title","No Title"), expanded=True):
-                st.markdown(f"**URL:** [{link['url']}]({link['url']})")
-                description = link["og_data"].get("description","")
-                if description:
-                    st.markdown(f"**Description:** {description}")
-    else:
-      st.info("No links saved yet")
+    # Display Saved Links
+    st.header("Saved Links")
+    
+    # Fetch and display links
+    saved_links = link_manager.get_all_links()
+    
+    # Create columns for grid layout
+    cols = st.columns(3)
+    
+    for i, link in enumerate(saved_links):
+        col = cols[i % 3]
+        with col:
+            # Custom card design
+            st.markdown(f"""
+            <div class="link-card">
+                {'<img src="' + (link[4] or 'https://via.placeholder.com/300x200?text=No+Preview') + '" style="width:100%;border-radius:8px;margin-bottom:10px;">' if link[4] else ''}
+                <h3>{link[2] or 'Untitled Link'}</h3>
+                <p>{link[3][:100] + '...' if link[3] else 'No description'}</p>
+                <a href="{link[1]}" target="_blank" style="text-decoration:none;">
+                    <button style="width:100%;background-color:#6200ee;color:white;border:none;border-radius:8px;padding:8px;">Open Link</button>
+                </a>
+            </div>
+            """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
